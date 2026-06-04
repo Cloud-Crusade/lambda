@@ -14,6 +14,9 @@ lambda/
 ├── domains/                  # 서비스 도메인별 모듈 (DDD)
 │   ├── ticketing/            # 대기열 순번 / 입장 토큰 도메인
 │   │   └── issue_ticket.py
+│   ├── persistence/          # 예약·결제 FIFO 큐 → RDS#2 적재 (leaky bucket)
+│   │   ├── handler.py
+│   │   └── test_handler.py
 │   └── sqs_lambda/           # SQS 기반 번호표 큐 처리 (채택 X)
 │       ├── enqueue_ticket.py
 │       └── dequeue_ticket.py
@@ -28,8 +31,22 @@ lambda/
    - Redis로 대기열 순번 발급·조회
    - 입장 순번 도달 시 입장 토큰(JWT, `aud=reservation_waiting`) 발급
 2. **입장 검증** — API Gateway는 JWT **유무**로만 통과시키고, 토큰 검증·거부는 **WAS 레이어**에서 수행
+3. **예약·결제 적재** — WAS가 단일 SQS FIFO 큐로 발행 → `persistence` Lambda가 leaky bucket으로 소비해 RDS#2(reservation/payment)에 적재
+   - 한 번에 최대 10건(batchSize) 수신, 예약 동시성(reserved concurrency) 5~10으로 DB 유입 속도 제한
+   - `messageGroupId` 단위 순서 보장(FIFO), 그룹 내 첫 실패부터는 `batchItemFailures`로 반환해 SQS 재처리
 
 ## Lambda Functions
+
+### persistence (domains/persistence)
+| 항목 | 내용 |
+|------|------|
+| 역할 | 예약·결제 FIFO 큐 메시지를 RDS#2에 멱등 적재 (leaky bucket consumer) |
+| 입력 | SQS event (Records) — action: reservation.create / reservation.cancel / payment.create |
+| 출력 | `{"batchItemFailures": [...]}` (부분 실패 보고) |
+| 특이사항 | PK 기준 ON CONFLICT DO NOTHING 멱등 처리, OperationalError 시 SQS 재처리 위임 |
+| 배포 설정 | event source mapping `batchSize=10`, reserved concurrency 5~10 (infra에서 지정) |
+| 의존 | psycopg2 (Layer), `RESERVATION_DB_URL` |
+
 
 ### issue_ticket (domains/ticketing)
 | 항목 | 내용 |
@@ -62,11 +79,13 @@ lambda/
 | REDIS_PORT | Redis 포트 | 6379 |
 | SQS_URL | 번호표 대기열 SQS URL | https://sqs.&lt;region&gt;.amazonaws.com/&lt;account&gt;/&lt;queue&gt;.fifo |
 | EKS_ENDPOINT | EKS 서비스 엔드포인트 | http://eks-endpoint |
+| RESERVATION_DB_URL | RDS#2(reservation/payment) 접속 URL (persistence) | postgresql://user:pass@host:5432/reservation |
 
 ## Layer
 | 레이어명 | 설명 | 런타임 |
 |----------|------|--------|
 | redis-layer | redis 라이브러리 | Python 3.12 |
+| psycopg2-layer | psycopg2 라이브러리 (persistence) | Python 3.12 |
 
 # Convention
 팀 내 협업의 효율 및 생산성을 위한 규약
