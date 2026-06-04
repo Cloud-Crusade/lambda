@@ -1,3 +1,45 @@
+# Lambda Service
+
+## Overview
+티켓팅 서비스의 대기열 관리를 담당하는 Lambda 함수 모음입니다.
+
+- user_id 기반 사용자 식별
+- Redis를 활용한 대기열 순번 발급
+- 중복 요청 방지 (아토믹 처리)
+- 대기열 앞 순번 실시간 계산
+
+## Directory Structure
+```
+lambda/
+├── domains/
+│   └── ticketing/
+│       └── issue_ticket.py
+├── common/
+└── README.md
+```
+
+## Lambda Functions
+
+### issue_ticket (domains/ticketing)
+| 항목 | 내용 |
+|------|------|
+| 역할 | 대기열 순번 발급 및 앞 순번 조회 |
+| 입력 | event_id, user_id |
+| 출력 | message, queue_number, remaining |
+| 특이사항 | 동일 user_id 재요청 시 기존 번호 반환 |
+
+## Environment Variables
+| 변수명 | 설명 | 예시 |
+|--------|------|------|
+| REDIS_HOST | ElastiCache 엔드포인트 주소 | xxx.cache.amazonaws.com |
+| REDIS_PORT | Redis 포트 | 6379 |
+| EKS_ENDPOINT | EKS 서비스 엔드포인트 | http://eks-endpoint |
+
+## Layer
+| 레이어명 | 설명 | 런타임 |
+|----------|------|--------|
+| redis-layer | redis 라이브러리 | Python 3.12 |
+
 # Convention
 팀 내 협업의 효율 및 생산성을 위한 규약
 
@@ -101,4 +143,3 @@ EX
 아키텍처 일반화
 - common: 공용 모듈
 - domains: 각 서비스 도메인 별 모듈
-
