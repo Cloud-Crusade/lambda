@@ -14,7 +14,7 @@ lambda/
 ├── domains/                  # 서비스 도메인별 모듈 (DDD)
 │   ├── ticketing/            # 대기열 순번 / 입장 토큰 도메인
 │   │   └── issue_ticket.py
-│   └── sqs_lambda/           # SQS 기반 번호표 큐 처리
+│   └── sqs_lambda/           # SQS 기반 번호표 큐 처리 (채택 X)
 │       ├── enqueue_ticket.py
 │       └── dequeue_ticket.py
 └── README.md
@@ -24,12 +24,10 @@ lambda/
 ## Architecture
 요청 흐름은 다음과 같습니다.
 
-1. **번호표 발급** — Client → API Gateway → `enqueue_ticket` → SQS(FIFO)에 UUID 번호표 등록
-2. **큐 소비** — SQS → `dequeue_ticket` (이후 WAS 레이어로 전달 예정)
-3. **순번 조회 / 입장 토큰** — Client → API Gateway → `issue_ticket`
+1. **순번 조회 / 입장 토큰** — Client → API Gateway → `issue_ticket`
    - Redis로 대기열 순번 발급·조회
    - 입장 순번 도달 시 입장 토큰(JWT, `aud=reservation_waiting`) 발급
-4. **입장 검증** — API Gateway는 JWT **유무**로만 통과시키고, 토큰 검증·거부는 **WAS 레이어**에서 수행
+2. **입장 검증** — API Gateway는 JWT **유무**로만 통과시키고, 토큰 검증·거부는 **WAS 레이어**에서 수행
 
 ## Lambda Functions
 
