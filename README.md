@@ -11,28 +11,58 @@
 ## Directory Structure
 ```
 lambda/
-├── domains/
-│   └── ticketing/
-│       └── issue_ticket.py
-├── common/
+├── domains/                  # 서비스 도메인별 모듈 (DDD)
+│   ├── ticketing/            # 대기열 순번 / 입장 토큰 도메인
+│   │   └── issue_ticket.py
+│   └── sqs_lambda/           # SQS 기반 번호표 큐 처리
+│       ├── enqueue_ticket.py
+│       └── dequeue_ticket.py
 └── README.md
 ```
+> 공용 코드가 생기면 `common/` 모듈을 추가합니다. ([Convention > Architecture](#architecture-1) 참고)
+
+## Architecture
+요청 흐름은 다음과 같습니다.
+
+1. **번호표 발급** — Client → API Gateway → `enqueue_ticket` → SQS(FIFO)에 UUID 번호표 등록
+2. **큐 소비** — SQS → `dequeue_ticket` (이후 WAS 레이어로 전달 예정)
+3. **순번 조회 / 입장 토큰** — Client → API Gateway → `issue_ticket`
+   - Redis로 대기열 순번 발급·조회
+   - 입장 순번 도달 시 입장 토큰(JWT, `aud=reservation_waiting`) 발급
+4. **입장 검증** — API Gateway는 JWT **유무**로만 통과시키고, 토큰 검증·거부는 **WAS 레이어**에서 수행
 
 ## Lambda Functions
 
 ### issue_ticket (domains/ticketing)
 | 항목 | 내용 |
 |------|------|
-| 역할 | 대기열 순번 발급 및 앞 순번 조회 |
+| 역할 | 대기열 순번 발급·조회, 입장 순번 도달 시 입장 토큰(JWT) 발급 |
 | 입력 | event_id, user_id |
-| 출력 | message, queue_number, remaining |
+| 출력 | code(WAITING / COMPLETED), message, data(queue_number·remaining 또는 token) |
 | 특이사항 | 동일 user_id 재요청 시 기존 번호 반환 |
+
+### enqueue_ticket (domains/sqs_lambda)
+| 항목 | 내용 |
+|------|------|
+| 역할 | UUID 번호표 발급 후 SQS(FIFO) 대기열 등록 |
+| 입력 | (없음) |
+| 출력 | message, uuid |
+| 특이사항 | MessageDeduplicationId로 중복 등록 방지 |
+
+### dequeue_ticket (domains/sqs_lambda)
+| 항목 | 내용 |
+|------|------|
+| 역할 | SQS 대기열 메시지 소비 처리 |
+| 입력 | SQS event (Records) |
+| 출력 | message |
+| 특이사항 | WAS(EKS) 전달 로직 추가 예정 |
 
 ## Environment Variables
 | 변수명 | 설명 | 예시 |
 |--------|------|------|
 | REDIS_HOST | ElastiCache 엔드포인트 주소 | xxx.cache.amazonaws.com |
 | REDIS_PORT | Redis 포트 | 6379 |
+| SQS_URL | 번호표 대기열 SQS URL | https://sqs.&lt;region&gt;.amazonaws.com/&lt;account&gt;/&lt;queue&gt;.fifo |
 | EKS_ENDPOINT | EKS 서비스 엔드포인트 | http://eks-endpoint |
 
 ## Layer
