@@ -15,8 +15,6 @@ lambda/
 │   └── ticketing/
 │       └── issue_ticket.py
 ├── common/
-├── redis-layer/
-│   └── redis-layer.zip
 └── README.md
 ```
 
