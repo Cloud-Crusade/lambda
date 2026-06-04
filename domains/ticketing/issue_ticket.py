@@ -1,6 +1,10 @@
 import json
 import redis
 import os
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 REDIS_HOST = os.environ.get('REDIS_HOST', '')
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
@@ -20,7 +24,7 @@ def lambda_handler(event, context):
     current_number = int(r.get(f"current:{event_id}") or 0)
     remaining = queue_number - current_number
 
-    print(f"user_id={user_id}, event_id={event_id}, queue_number={queue_number}, remaining={remaining}")
+    logger.info(f"user_id={user_id}, event_id={event_id}, queue_number={queue_number}, remaining={remaining}")
 
     return {
         'statusCode': 200,
