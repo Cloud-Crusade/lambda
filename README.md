@@ -11,23 +11,29 @@
 ## Directory Structure
 ```
 lambda/
+├── common/                   # 도메인 공통 모듈
+│   └── logging.py
 ├── domains/                  # 서비스 도메인별 모듈 (DDD)
 │   ├── ticketing/            # 대기열 순번 / 입장 토큰 도메인
-│   │   └── issue_ticket.py
-│   ├── persistence/          # 예약·결제 FIFO 큐 → RDS#2 적재 (leaky bucket)
-│   │   ├── handler.py
-│   │   └── test_handler.py
-│   └── sqs_lambda/           # SQS 기반 번호표 큐 처리 (채택 X)
-│       ├── enqueue_ticket.py
-│       └── dequeue_ticket.py
+│   │   ├── index.py          # 진입점 (lambda_handler)
+│   │   └── service.py        # QueueService (대기열·토큰 로직)
+│   └── persistence/          # 예약·결제 FIFO 큐 → RDS#2 적재 (leaky bucket)
+│       ├── index.py          # 진입점 (lambda_handler)
+│       ├── consumer.py       # PersistenceConsumer (소비·순서·부분 실패)
+│       └── repository.py     # ReservationRepository (DB 적재)
+├── test/                     # 아키텍처 구조를 미러링한 테스트
+│   └── domains/
+│       └── persistence/
+│           └── test_consumer.py
 └── README.md
 ```
-> 공용 코드가 생기면 `common/` 모듈을 추가합니다. ([Convention > Architecture](#architecture-1) 참고)
+> **진입점은 도메인별 `index.py` 의 `lambda_handler` 함수로 통일**합니다. 구현은 같은 디렉토리의 다른 파일(OOP)로 분리하고, 공통 모듈은 `common/` 에 둡니다.
+> Lambda handler 설정값: `domains.<도메인>.index.lambda_handler`
 
 ## Architecture
 요청 흐름은 다음과 같습니다.
 
-1. **순번 조회 / 입장 토큰** — Client → API Gateway → `issue_ticket`
+1. **순번 조회 / 입장 토큰** — Client → API Gateway → `ticketing`
    - Redis로 대기열 순번 발급·조회
    - 입장 순번 도달 시 입장 토큰(JWT, `aud=reservation_waiting`) 발급
 2. **입장 검증** — API Gateway는 JWT **유무**로만 통과시키고, 토큰 검증·거부는 **WAS 레이어**에서 수행
@@ -37,48 +43,32 @@ lambda/
 
 ## Lambda Functions
 
-### persistence (domains/persistence)
-| 항목 | 내용 |
-|------|------|
-| 역할 | 예약·결제 FIFO 큐 메시지를 RDS#2에 멱등 적재 (leaky bucket consumer) |
-| 입력 | SQS event (Records) — action: reservation.create / reservation.cancel / payment.create |
-| 출력 | `{"batchItemFailures": [...]}` (부분 실패 보고) |
-| 특이사항 | PK 기준 ON CONFLICT DO NOTHING 멱등 처리, OperationalError 시 SQS 재처리 위임 |
-| 배포 설정 | event source mapping `batchSize=10`, reserved concurrency 5~10 (infra에서 지정) |
-| 의존 | psycopg2 (Layer), `RESERVATION_DB_URL` |
-
-
-### issue_ticket (domains/ticketing)
+### ticketing (domains/ticketing — `index.lambda_handler`)
 | 항목 | 내용 |
 |------|------|
 | 역할 | 대기열 순번 발급·조회, 입장 순번 도달 시 입장 토큰(JWT) 발급 |
 | 입력 | event_id, user_id |
 | 출력 | code(WAITING / COMPLETED), message, data(queue_number·remaining 또는 token) |
+| 구현 | `service.QueueService` (Redis 대기열 + JWT 발급) |
 | 특이사항 | 동일 user_id 재요청 시 기존 번호 반환 |
 
-### enqueue_ticket (domains/sqs_lambda)
+### persistence (domains/persistence — `index.lambda_handler`)
 | 항목 | 내용 |
 |------|------|
-| 역할 | UUID 번호표 발급 후 SQS(FIFO) 대기열 등록 |
-| 입력 | (없음) |
-| 출력 | message, uuid |
-| 특이사항 | MessageDeduplicationId로 중복 등록 방지 |
-
-### dequeue_ticket (domains/sqs_lambda)
-| 항목 | 내용 |
-|------|------|
-| 역할 | SQS 대기열 메시지 소비 처리 |
-| 입력 | SQS event (Records) |
-| 출력 | message |
-| 특이사항 | WAS(EKS) 전달 로직 추가 예정 |
+| 역할 | 예약·결제 FIFO 큐 메시지를 RDS#2에 멱등 적재 (leaky bucket consumer) |
+| 입력 | SQS event (Records) — action: reservation.create / reservation.cancel / payment.create |
+| 출력 | `{"batchItemFailures": [...]}` (부분 실패 보고) |
+| 구현 | `consumer.PersistenceConsumer` + `repository.ReservationRepository` |
+| 특이사항 | PK 기준 ON CONFLICT DO NOTHING 멱등 처리, OperationalError 시 SQS 재처리 위임 |
+| 배포 설정 | event source mapping `batchSize=10`, reserved concurrency 5~10 (infra에서 지정) |
+| 의존 | psycopg2 (Layer), `RESERVATION_DB_URL` |
 
 ## Environment Variables
 | 변수명 | 설명 | 예시 |
 |--------|------|------|
-| REDIS_HOST | ElastiCache 엔드포인트 주소 | xxx.cache.amazonaws.com |
-| REDIS_PORT | Redis 포트 | 6379 |
-| SQS_URL | 번호표 대기열 SQS URL | https://sqs.&lt;region&gt;.amazonaws.com/&lt;account&gt;/&lt;queue&gt;.fifo |
-| EKS_ENDPOINT | EKS 서비스 엔드포인트 | http://eks-endpoint |
+| REDIS_HOST | ElastiCache 엔드포인트 주소 (ticketing) | xxx.cache.amazonaws.com |
+| REDIS_PORT | Redis 포트 (ticketing) | 6379 |
+| JWT_SECRET | 입장 토큰 서명 키 (ticketing) | (Secrets Manager) |
 | RESERVATION_DB_URL | RDS#2(reservation/payment) 접속 URL (persistence) | postgresql://user:pass@host:5432/reservation |
 
 ## Layer
