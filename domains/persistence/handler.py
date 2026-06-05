@@ -67,7 +67,10 @@ def _processGroup(group_records: list[dict[str, Any]]) -> int | None:
         except OperationalError:
             # RDS 페일오버 등 일시 오류 → 커넥션 폐기 후 SQS 재처리에 위임
             logger.exception("db_operational_error: message_id=%s", record.get("messageId"))
-            _connection = None
+            try:
+                conn.close()
+            finally:
+                _connection = None
             return index
         except Exception:
             conn.rollback()
