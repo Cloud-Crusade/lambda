@@ -32,15 +32,22 @@ jobs:
       - name: zip lambda domains
         run: |
           mkdir -p dist
+          : > dist/lambda-modules.txt
 
           for dir in domains/*; do
             if [ -d "$dir" ]; then
               name=$(basename "$dir")
 
               echo "create zip for $name"
+              echo "$name" >> dist/lambda-modules.txt
 
               (
                 cd "$dir"
+
+                if [ -d "../../common" ]; then
+                  cp -r ../../common ./common
+                fi
+
                 zip -r "../../dist/${name}.zip" .
               )
             fi
