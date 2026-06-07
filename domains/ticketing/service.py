@@ -11,10 +11,15 @@ logger = getLogger("ticketing")
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-JWT_SECRET = os.environ.get("JWT_SECRET", "secret")
-JWT_ALGORITHM = "HS256"
+# JWT_SECRET 은 terraform 이 생성한 예약 RSA 개인키(PEM) — 검증측(authorizer)은 S3 공개키로 RS256 검증
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+JWT_ALGORITHM = "RS256"
 JWT_AUDIENCE = "reservation_waiting"
 CACHE_TTL_SECONDS = 3600
+
+
+class SigningKeyError(RuntimeError):
+    """RS256 서명에 필요한 개인키(PEM)가 없거나 유효하지 않음 (설정 오류)."""
 
 
 class QueueService:
@@ -22,6 +27,24 @@ class QueueService:
         self._redis = redis_client or redis.Redis(
             host=REDIS_HOST, port=REDIS_PORT, decode_responses=True,
         )
+        # RS256 개인키(PEM)를 콜드스타트에 검증 → 토큰 발급 시점의 모호한 500 회피
+        self._signing_key = self._loadSigningKey(JWT_SECRET)
+
+    @staticmethod
+    def _loadSigningKey(secret: str) -> str:
+        if not secret:
+            raise SigningKeyError(
+                "JWT_SECRET 이 비어 있습니다 — RS256 서명에는 RSA 개인키 PEM 이 필요합니다",
+            )
+        try:
+            # PEM 파싱 가능 여부를 발급 전에 검증 (cryptography 는 RS256 런타임 레이어에 포함)
+            from jwt.algorithms import RSAAlgorithm
+            RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(secret)
+        except Exception as error:
+            raise SigningKeyError(
+                f"JWT_SECRET 이 유효한 RSA 개인키 PEM 이 아닙니다: {error}",
+            ) from error
+        return secret
 
     def issue(self, *, event_id: str, user_id: str) -> dict[str, Any]:
         cache_key = f"{event_id}:{user_id}"
@@ -46,7 +69,7 @@ class QueueService:
     def _completed(self, *, event_id: str, user_id: str) -> dict[str, Any]:
         token = jwt.encode(
             {"user_id": user_id, "event_id": event_id, "aud": JWT_AUDIENCE},
-            JWT_SECRET,
+            self._signing_key,
             algorithm=JWT_ALGORITHM,
         )
         return {
