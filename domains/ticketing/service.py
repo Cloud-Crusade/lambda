@@ -11,8 +11,9 @@ logger = getLogger("ticketing")
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-JWT_SECRET = os.environ.get("JWT_SECRET", "secret")
-JWT_ALGORITHM = "HS256"
+# JWT_SECRET 은 terraform 이 생성한 예약 RSA 개인키(PEM) — 검증측(authorizer)은 S3 공개키로 RS256 검증
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+JWT_ALGORITHM = "RS256"
 JWT_AUDIENCE = "reservation_waiting"
 CACHE_TTL_SECONDS = 3600
 
