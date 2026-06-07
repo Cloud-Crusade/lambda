@@ -17,12 +17,18 @@ lambda/
 │   ├── ticketing/            # 대기열 순번 / 입장 토큰 도메인
 │   │   ├── index.py          # 진입점 (lambda_handler)
 │   │   └── service.py        # QueueService (대기열·토큰 로직)
+│   ├── authorizer/           # API Gateway REQUEST authorizer (예약+인증 토큰 동시 검증)
+│   │   ├── index.py          # 진입점 (lambda_handler) — IAM 정책(Allow/Deny) 반환
+│   │   ├── service.py        # AuthorizerService (이중 토큰 검증·동일 유저 판별)
+│   │   └── keys.py           # KeyProvider (S3 공개키 + Secrets Manager 대칭키, 인스턴스 캐시)
 │   └── persistence/          # 예약·결제 FIFO 큐 → RDS#2 적재 (leaky bucket)
 │       ├── index.py          # 진입점 (lambda_handler)
 │       ├── consumer.py       # PersistenceConsumer (소비·순서·부분 실패)
 │       └── repository.py     # ReservationRepository (DB 적재)
 ├── test/                     # 아키텍처 구조를 미러링한 테스트
 │   └── domains/
+│       ├── authorizer/
+│       │   └── test_service.py
 │       └── persistence/
 │           └── test_consumer.py
 └── README.md
@@ -36,7 +42,10 @@ lambda/
 1. **순번 조회 / 입장 토큰** — Client → API Gateway → `ticketing`
    - Redis로 대기열 순번 발급·조회
    - 입장 순번 도달 시 입장 토큰(JWT, `aud=reservation_waiting`) 발급
-2. **입장 검증** — API Gateway는 JWT **유무**로만 통과시키고, 토큰 검증·거부는 **WAS 레이어**에서 수행
+2. **입장 검증** — API Gateway 가 예약 경로에 `authorizer` Lambda(REQUEST authorizer)를 붙여 **두 토큰을 함께 검증**
+   - `Reservation` 헤더의 예약 토큰을 S3 공개키로 **RS256** 검증
+   - `Authorization` 헤더의 인증 토큰을 Secrets Manager 대칭키로 **HS256** 검증
+   - 두 토큰의 `user_id` 가 같으면 Allow, 다르거나 서명 무효면 Deny(403), 자격 증명 누락이면 401
 3. **예약·결제 적재** — WAS가 단일 SQS FIFO 큐로 발행 → `persistence` Lambda가 leaky bucket으로 소비해 RDS#2(reservation/payment)에 적재
    - 한 번에 최대 10건(batchSize) 수신, 예약 동시성(reserved concurrency) 5~10으로 DB 유입 속도 제한
    - `messageGroupId` 단위 순서 보장(FIFO), 그룹 내 첫 실패부터는 `batchItemFailures`로 반환해 SQS 재처리
@@ -51,6 +60,16 @@ lambda/
 | 출력 | code(WAITING / COMPLETED), message, data(queue_number·remaining 또는 token) |
 | 구현 | `service.QueueService` (Redis 대기열 + JWT 발급) |
 | 특이사항 | 동일 user_id 재요청 시 기존 번호 반환 |
+
+### authorizer (domains/authorizer — `index.lambda_handler`)
+| 항목 | 내용 |
+|------|------|
+| 역할 | 예약 토큰(RS256)·인증 토큰(HS256)을 함께 검증하고 동일 유저인지로 인가 |
+| 입력 | API Gateway REQUEST authorizer event — `Reservation`·`Authorization` 헤더 |
+| 출력 | IAM 정책 문서(Allow/Deny). 누락 시 `Unauthorized` 예외(→401) |
+| 구현 | `service.AuthorizerService` + `keys.KeyProvider` |
+| 특이사항 | 공개키는 인스턴스 캐시, 대칭키는 Secrets Extension(로컬 캐시)로 조회, 알고리즘 핀(RS256/HS256)으로 confusion 방지 |
+| 의존 | PyJWT + cryptography (Layer), Secrets Extension (Layer), boto3(런타임 기본) |
 
 ### persistence (domains/persistence — `index.lambda_handler`)
 | 항목 | 내용 |
@@ -70,12 +89,22 @@ lambda/
 | REDIS_PORT | Redis 포트 (ticketing) | 6379 |
 | JWT_SECRET | 입장 토큰 서명 키 (ticketing) | (Secrets Manager) |
 | RESERVATION_DB_URL | RDS#2(reservation/payment) 접속 URL (persistence) | postgresql://user:pass@host:5432/reservation |
+| PUBLIC_KEY_BUCKET | Reservation 공개키가 있는 S3 버킷 (authorizer) | my-public-bucket |
+| PUBLIC_KEY_KEY | Reservation 공개키 S3 키 (authorizer) | jwt/dev/reservation/public_key.pem |
+| AUTHORIZATION_SECRET_ARN | Authorization 대칭키(HS256) Secrets Manager ARN (authorizer) | arn:aws:secretsmanager:...:dev-authorization-secret |
+| RESERVATION_AUDIENCE | 예약 토큰 aud 검증값 (authorizer, 기본 `reservation_waiting`) | reservation_waiting |
+| USER_CLAIM | 동일 유저 판별 클레임 이름 (authorizer, 기본 `user_id`) | user_id |
+
+> authorizer 의 키 위치는 모두 infra(terraform)에서 주입한다. S3 공개키는 `s3:GetObject`,
+> Secrets Manager 대칭키는 `secretsmanager:GetSecretValue` 권한이 Lambda 실행 역할에 필요하다.
 
 ## Layer
 | 레이어명 | 설명 | 런타임 |
 |----------|------|--------|
 | redis-layer | redis 라이브러리 | Python 3.12 |
 | psycopg2-layer | psycopg2 라이브러리 (persistence) | Python 3.12 |
+| jwt-layer | PyJWT + cryptography 라이브러리 (RS256/HS256 검증, authorizer·ticketing) | Python 3.12 |
+| secrets-extension | AWS Parameters and Secrets Lambda Extension (Authorization 대칭키 로컬 캐시, authorizer) | AWS 관리형 Layer |
 
 # Convention
 팀 내 협업의 효율 및 생산성을 위한 규약
