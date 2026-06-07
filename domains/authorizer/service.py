@@ -64,14 +64,19 @@ class AuthorizerService:
         return reservation_user
 
     def _extractToken(self, headers: dict[str, str], name: str) -> str:
-        value = headers.get(name, "")
+        value = headers.get(name, "").strip()
         if not value:
             raise MissingCredentialError(f"missing {name} header")
-        # "Bearer <token>" 형태도 허용 (Authorization 헤더 관례)
         parts = value.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
+        if parts[0].lower() == "bearer":
+            # "Bearer <token>" 형태만 허용 — 접두사만 오면 자격 증명 누락(401)
+            if len(parts) != 2:
+                raise MissingCredentialError(f"malformed {name} header: bearer prefix without token")
             return parts[1]
-        return value
+        # 접두사 없는 단일 토큰. 공백 포함 비정상 포맷은 누락으로 간주
+        if len(parts) != 1:
+            raise MissingCredentialError(f"malformed {name} header")
+        return parts[0]
 
     def _verifyReservation(self, token: str) -> str:
         try:

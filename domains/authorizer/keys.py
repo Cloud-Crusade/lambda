@@ -28,6 +28,10 @@ SECRETS_EXTENSION_PORT = os.environ.get("PARAMETERS_SECRETS_EXTENSION_HTTP_PORT"
 SECRETS_EXTENSION_TIMEOUT = 2
 
 
+class KeyConfigError(RuntimeError):
+    """검증키 조달에 필요한 환경변수/실행 환경 값이 누락됨 (설정 오류)."""
+
+
 class KeyProvider:
     def __init__(self, s3_client: Any = None) -> None:
         self._s3 = s3_client or boto3.client("s3")
@@ -36,6 +40,9 @@ class KeyProvider:
     def reservationPublicKey(self) -> str:
         # 최초 1회만 S3 조회 → 이후 호출은 인스턴스 캐시 사용
         if self._public_key is None:
+            # env 누락은 S3 오류 전에 명확히 드러낸다(운영/디버깅)
+            if not PUBLIC_KEY_BUCKET or not PUBLIC_KEY_KEY:
+                raise KeyConfigError("PUBLIC_KEY_BUCKET/PUBLIC_KEY_KEY 환경변수가 비어 있습니다")
             response = self._s3.get_object(Bucket=PUBLIC_KEY_BUCKET, Key=PUBLIC_KEY_KEY)
             self._public_key = response["Body"].read().decode("utf-8")
             logger.info(
@@ -45,14 +52,19 @@ class KeyProvider:
         return self._public_key
 
     def authorizationSecret(self) -> str:
+        if not AUTHORIZATION_SECRET_ARN:
+            raise KeyConfigError("AUTHORIZATION_SECRET_ARN 환경변수가 비어 있습니다")
+        # 익스텐션 인증 토큰 — Lambda 실행 환경에 자동 주입되는 세션 토큰
+        session_token = os.environ.get("AWS_SESSION_TOKEN")
+        if not session_token:
+            raise KeyConfigError("AWS_SESSION_TOKEN 이 없습니다 (Secrets Extension 레이어 미부착)")
         # Secrets Extension 익스텐션 캐시를 통해 조회(매 호출 localhost, 외부 API 아님)
         url = (
             f"http://localhost:{SECRETS_EXTENSION_PORT}/secretsmanager/get"
             f"?secretId={urllib.parse.quote(AUTHORIZATION_SECRET_ARN, safe='')}"
         )
         request = urllib.request.Request(url)
-        # 익스텐션 인증 토큰 — Lambda 실행 환경에 자동 주입되는 세션 토큰
-        request.add_header("X-Aws-Parameters-Secrets-Token", os.environ["AWS_SESSION_TOKEN"])
+        request.add_header("X-Aws-Parameters-Secrets-Token", session_token)
         with urllib.request.urlopen(request, timeout=SECRETS_EXTENSION_TIMEOUT) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return payload["SecretString"]

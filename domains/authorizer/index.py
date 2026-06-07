@@ -30,6 +30,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     except AuthorizationError as error:
         logger.info("forbidden: %s", error)
         return _policy(principal_id="unauthorized", effect="Deny", method_arn=method_arn)
+    except Exception:
+        # 키 조회 실패·설정 누락 등 예상치 못한 오류는 fail-closed 로 Deny (500 회피)
+        logger.exception("authorizer_error")
+        return _policy(principal_id="unauthorized", effect="Deny", method_arn=method_arn)
 
     logger.info("authorized: user_id=%s", user_id)
     return _policy(

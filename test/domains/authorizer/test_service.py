@@ -26,7 +26,10 @@ if "jwt" not in sys.modules:
     _calls: list[dict] = []
 
     def _decode(token, key, algorithms=None, audience=None, options=None):
-        _calls.append({"key": key, "algorithms": algorithms, "audience": audience})
+        _calls.append({
+            "key": key, "algorithms": algorithms,
+            "audience": audience, "options": options,
+        })
         payload = json.loads(token)
         if payload.get("_raise"):
             raise _PyJWTError("invalid signature")
@@ -86,6 +89,16 @@ class AuthorizerServiceTest(unittest.TestCase):
         self.assertEqual(authorization_call["algorithms"], ["HS256"])
         self.assertEqual(authorization_call["key"], "AUTHORIZATION_SECRET")
 
+    def test_pins_audience_and_aud_option(self):
+        headers = {"reservation": _token("u1"), "authorization": _token("u1")}
+
+        _service().authorize(headers)
+
+        reservation_call, authorization_call = jwt._calls
+        # 예약 토큰은 aud 핀 고정, 인증 토큰은 aud 미검증(규약 미정)
+        self.assertEqual(reservation_call["audience"], "reservation_waiting")
+        self.assertEqual(authorization_call["options"], {"verify_aud": False})
+
     def test_user_mismatch_rejected(self):
         headers = {"reservation": _token("u1"), "authorization": _token("u2")}
 
@@ -126,6 +139,13 @@ class AuthorizerServiceTest(unittest.TestCase):
         }
 
         self.assertEqual(_service().authorize(headers), "u1")
+
+    def test_bearer_without_token_treated_as_missing(self):
+        # 접두사만 오면 자격 증명 누락(401) 으로 매핑되어야 함
+        headers = {"reservation": _token("u1"), "authorization": "Bearer"}
+
+        with self.assertRaises(MissingCredentialError):
+            _service().authorize(headers)
 
 
 if __name__ == "__main__":
