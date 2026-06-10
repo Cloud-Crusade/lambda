@@ -1,10 +1,13 @@
 """captcha 도메인 단일 진입점 — ALTCHA PoW 챌린지 발급(API Gateway proxy)."""
 import json
+import os
 from typing import Any
 
+from common.secrets import get_secret_string
 from domains.captcha.service import CaptchaService
 
-_service = CaptchaService()
+# 콜드스타트 1회 — 시크릿은 Secrets 확장 캐시에서 조회(env 에는 이름만 둔다)
+_service = CaptchaService(secret=get_secret_string(os.environ["CAPTCHA_SECRET_ID"]))
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
