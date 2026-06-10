@@ -4,6 +4,7 @@
 """
 import base64
 import hashlib
+import hmac
 import json
 import unittest
 
@@ -36,19 +37,38 @@ class CaptchaServiceTest(unittest.TestCase):
         self.service = CaptchaService(secret=SECRET, complexity=COMPLEXITY)
 
     def test_issue_and_verify_roundtrip(self) -> None:
-        token = _solve(self.service.issueChallenge())
+        token = _solve(self.service.issue_challenge())
         self.assertTrue(self.service.verify(token))
 
     def test_verify_rejects_tampered_number(self) -> None:
-        data = json.loads(base64.b64decode(_solve(self.service.issueChallenge())))
+        data = json.loads(base64.b64decode(_solve(self.service.issue_challenge())))
         data["number"] += 1
         tampered = base64.b64encode(json.dumps(data).encode()).decode()
         self.assertFalse(self.service.verify(tampered))
 
     def test_verify_rejects_wrong_secret(self) -> None:
-        token = _solve(self.service.issueChallenge())
+        token = _solve(self.service.issue_challenge())
         other = CaptchaService(secret="other-secret", complexity=COMPLEXITY)
         self.assertFalse(other.verify(token))
+
+    def test_verify_rejects_expired(self) -> None:
+        # salt 끝의 만료 timestamp 를 과거(epoch 100)로 둔, 해시·서명은 유효한 토큰
+        salt = "deadbeef.100"
+        number = 3
+        challenge = hashlib.sha256(f"{salt}{number}".encode()).hexdigest()
+        signature = hmac.new(SECRET.encode(), challenge.encode(), hashlib.sha256).hexdigest()
+        token = base64.b64encode(
+            json.dumps(
+                {
+                    "algorithm": "SHA-256",
+                    "challenge": challenge,
+                    "number": number,
+                    "salt": salt,
+                    "signature": signature,
+                }
+            ).encode()
+        ).decode()
+        self.assertFalse(self.service.verify(token))
 
     def test_verify_rejects_garbage(self) -> None:
         self.assertFalse(self.service.verify("not-a-valid-token"))

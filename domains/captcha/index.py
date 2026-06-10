@@ -8,7 +8,7 @@ _service = CaptchaService()
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    challenge = _service.issueChallenge()
+    challenge = _service.issue_challenge()
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},

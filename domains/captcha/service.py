@@ -30,10 +30,15 @@ class CaptchaService:
     def __init__(self, secret: str | None = None, complexity: int | None = None) -> None:
         secret = secret if secret is not None else os.environ.get("CAPTCHA_HMAC_SECRET", "")
         if not secret:
+            logger.error("captcha_config_error: CAPTCHA_HMAC_SECRET 미설정")
             raise CaptchaConfigError("CAPTCHA_HMAC_SECRET 이 비어 있습니다 — HMAC 키가 필요합니다")
         self._secret = secret.encode()
         # 0 이하면 randbelow 가 ValueError → 최소 1 로 보정
-        raw = complexity if complexity is not None else int(os.environ.get("CAPTCHA_COMPLEXITY", 100_000))
+        raw = (
+            complexity
+            if complexity is not None
+            else int(os.environ.get("CAPTCHA_COMPLEXITY", 100_000))
+        )
         self._complexity = max(1, raw)
 
     def _sha256Hex(self, value: str) -> str:
@@ -42,7 +47,7 @@ class CaptchaService:
     def _sign(self, challenge: str) -> str:
         return hmac.new(self._secret, challenge.encode(), hashlib.sha256).hexdigest()
 
-    def issueChallenge(self) -> dict[str, Any]:
+    def issue_challenge(self) -> dict[str, Any]:
         # number 는 PoW 정답 — 클라이언트가 0..maxnumber(포함) 에서 brute-force 로 찾는다
         number = secrets.randbelow(self._complexity + 1)
         expires = int(time.time()) + CHALLENGE_TTL_SECONDS
