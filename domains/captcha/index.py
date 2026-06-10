@@ -4,10 +4,13 @@ import os
 from typing import Any
 
 from common.secrets import get_secret_string
-from domains.captcha.service import CaptchaService
+from domains.captcha.service import CaptchaConfigError, CaptchaService
 
 # 콜드스타트 1회 — 시크릿은 Secrets 확장 캐시에서 조회(env 에는 이름만 둔다)
-_service = CaptchaService(secret=get_secret_string(os.environ["CAPTCHA_SECRET_ID"]))
+_secret_id = os.environ.get("CAPTCHA_SECRET_ID")
+if not _secret_id:
+    raise CaptchaConfigError("CAPTCHA_SECRET_ID 환경변수가 없습니다")
+_service = CaptchaService(secret=get_secret_string(_secret_id))
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:

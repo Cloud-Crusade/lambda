@@ -20,13 +20,17 @@ class GetSecretStringTest(unittest.TestCase):
         result = secrets_module.get_secret_string("dev-captcha-hmac-secret")
 
         self.assertEqual(result, "s3cr3t")
-        # 확장 엔드포인트 + 인증 토큰 헤더로 호출했는지 확인
+        # 확장 엔드포인트 + 인증 토큰 헤더로 호출했는지 확인 (헤더명은 대소문자 무관 검사)
         request = mock_urlopen.call_args.args[0]
         self.assertIn("/secretsmanager/get", request.full_url)
         self.assertIn("secretId=dev-captcha-hmac-secret", request.full_url)
-        self.assertEqual(
-            request.get_header("X-aws-parameters-secrets-token"), "session-token"
-        )
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(headers["x-aws-parameters-secrets-token"], "session-token")
+
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_missing_session_token_raises(self) -> None:
+        with self.assertRaises(secrets_module.SecretsConfigError):
+            secrets_module.get_secret_string("dev-captcha-hmac-secret")
 
 
 if __name__ == "__main__":

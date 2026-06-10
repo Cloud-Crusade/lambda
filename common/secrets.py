@@ -11,14 +11,24 @@ import urllib.request
 _EXTENSION_PORT = os.environ.get("PARAMETERS_SECRETS_EXTENSION_HTTP_PORT", "2773")
 
 
+class SecretsConfigError(RuntimeError):
+    """Secrets 확장 조회에 필요한 설정(세션 토큰 등) 누락 (설정 오류)."""
+
+
 def get_secret_string(secret_id: str) -> str:
+    # 확장 호출 인증 토큰 — 없으면 레이어 미부착/로컬 실행 → 원인을 명확히
+    session_token = os.environ.get("AWS_SESSION_TOKEN")
+    if not session_token:
+        raise SecretsConfigError(
+            "AWS_SESSION_TOKEN 이 없습니다 (Secrets Extension 레이어 미부착/로컬 실행)"
+        )
+
     url = (
         f"http://localhost:{_EXTENSION_PORT}/secretsmanager/get"
         f"?secretId={urllib.parse.quote(secret_id, safe='')}"
     )
     request = urllib.request.Request(url)
-    # 확장 호출 인증 — Lambda 실행 환경의 세션 토큰
-    request.add_header("X-Aws-Parameters-Secrets-Token", os.environ["AWS_SESSION_TOKEN"])
+    request.add_header("X-Aws-Parameters-Secrets-Token", session_token)
     with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
         payload = json.loads(response.read())
     return payload["SecretString"]
