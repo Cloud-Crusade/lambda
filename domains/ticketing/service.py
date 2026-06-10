@@ -6,13 +6,14 @@ import jwt
 import redis
 
 from common.logging import getLogger
+from common.secrets import get_secret_string
 
 logger = getLogger("ticketing")
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-# JWT_SECRET 은 terraform 이 생성한 예약 RSA 개인키(PEM) — 검증측(authorizer)은 S3 공개키로 RS256 검증
-JWT_SECRET = os.environ.get("JWT_SECRET", "")
+# 예약 토큰 서명용 RSA 개인키 — Secrets Manager 시크릿 이름(값이 아닌 이름만 env 로 주입)
+RESERVATION_SECRET_ID = os.environ.get("RESERVATION_SECRET_ID", "")
 JWT_ALGORITHM = "RS256"
 JWT_AUDIENCE = "reservation_waiting"
 CACHE_TTL_SECONDS = 3600
@@ -23,18 +24,25 @@ class SigningKeyError(RuntimeError):
 
 
 class QueueService:
-    def __init__(self, redis_client: Any = None) -> None:
+    def __init__(self, redis_client: Any = None, signing_key: str | None = None) -> None:
         self._redis = redis_client or redis.Redis(
             host=REDIS_HOST, port=REDIS_PORT, decode_responses=True,
         )
-        # RS256 개인키(PEM)를 콜드스타트에 검증 → 토큰 발급 시점의 모호한 500 회피
-        self._signing_key = self._loadSigningKey(JWT_SECRET)
+        # 키는 Secrets 확장 캐시에서 조회(env 엔 시크릿 이름만). 콜드스타트에 PEM 검증 → 발급 시 모호한 500 회피
+        raw_key = signing_key if signing_key is not None else self._fetchSigningKey()
+        self._signing_key = self._loadSigningKey(raw_key)
+
+    @staticmethod
+    def _fetchSigningKey() -> str:
+        if not RESERVATION_SECRET_ID:
+            raise SigningKeyError("RESERVATION_SECRET_ID 환경변수가 비어 있습니다")
+        return get_secret_string(RESERVATION_SECRET_ID)
 
     @staticmethod
     def _loadSigningKey(secret: str) -> str:
         if not secret:
             raise SigningKeyError(
-                "JWT_SECRET 이 비어 있습니다 — RS256 서명에는 RSA 개인키 PEM 이 필요합니다",
+                "예약 서명키가 비어 있습니다 — RS256 서명에는 RSA 개인키 PEM 이 필요합니다",
             )
         try:
             # PEM 파싱 가능 여부를 발급 전에 검증 (cryptography 는 RS256 런타임 레이어에 포함)
@@ -42,7 +50,7 @@ class QueueService:
             RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(secret)
         except Exception as error:
             raise SigningKeyError(
-                f"JWT_SECRET 이 유효한 RSA 개인키 PEM 이 아닙니다: {error}",
+                f"예약 서명키가 유효한 RSA 개인키 PEM 이 아닙니다: {error}",
             ) from error
         return secret
 

@@ -87,7 +87,7 @@ lambda/
 |--------|------|------|
 | REDIS_HOST | ElastiCache 엔드포인트 주소 (ticketing) | xxx.cache.amazonaws.com |
 | REDIS_PORT | Redis 포트 (ticketing) | 6379 |
-| JWT_SECRET | 입장 토큰 서명 키 (ticketing) | (Secrets Manager) |
+| RESERVATION_SECRET_ID | 입장 토큰 서명용 예약 RSA 개인키의 Secrets Manager 시크릿 이름/ARN (ticketing, 확장 캐시 조회) | dev-reservation-private-key |
 | RESERVATION_DB_URL | RDS#2(reservation/payment) 접속 URL (persistence) | postgresql://user:pass@host:5432/reservation |
 | PUBLIC_KEY_BUCKET | Reservation 공개키가 있는 S3 버킷 (authorizer) | my-public-bucket |
 | PUBLIC_KEY_KEY | Reservation 공개키 S3 키 (authorizer) | jwt/dev/reservation/public_key.pem |
