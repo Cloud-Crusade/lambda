@@ -6,15 +6,13 @@
   별도 캐시하지 않는다(시크릿 회전이 재배포 없이 반영됨).
 키 위치는 모두 infra(terraform)에서 환경변수로 주입한다.
 """
-import json
 import os
-import urllib.parse
-import urllib.request
 from typing import Any
 
 import boto3
 
 from common.logging import getLogger
+from common.secrets import get_secret_string
 
 logger = getLogger("authorizer")
 
@@ -23,8 +21,7 @@ PUBLIC_KEY_BUCKET = os.environ.get("PUBLIC_KEY_BUCKET", "")
 PUBLIC_KEY_KEY = os.environ.get("PUBLIC_KEY_KEY", "")
 # Authorization 대칭키 — Secrets Manager 시크릿 ARN(또는 이름)
 AUTHORIZATION_SECRET_ARN = os.environ.get("AUTHORIZATION_SECRET_ARN", "")
-# Secrets Extension 로컬 HTTP 포트 (레이어 기본값 2773)
-SECRETS_EXTENSION_PORT = os.environ.get("PARAMETERS_SECRETS_EXTENSION_HTTP_PORT", "2773")
+# 익스텐션 조회 타임아웃(초) — authorizer 는 인증 경로라 짧게
 SECRETS_EXTENSION_TIMEOUT = 2
 
 
@@ -54,17 +51,5 @@ class KeyProvider:
     def authorizationSecret(self) -> str:
         if not AUTHORIZATION_SECRET_ARN:
             raise KeyConfigError("AUTHORIZATION_SECRET_ARN 환경변수가 비어 있습니다")
-        # 익스텐션 인증 토큰 — Lambda 실행 환경에 자동 주입되는 세션 토큰
-        session_token = os.environ.get("AWS_SESSION_TOKEN")
-        if not session_token:
-            raise KeyConfigError("AWS_SESSION_TOKEN 이 없습니다 (Secrets Extension 레이어 미부착)")
-        # Secrets Extension 익스텐션 캐시를 통해 조회(매 호출 localhost, 외부 API 아님)
-        url = (
-            f"http://localhost:{SECRETS_EXTENSION_PORT}/secretsmanager/get"
-            f"?secretId={urllib.parse.quote(AUTHORIZATION_SECRET_ARN, safe='')}"
-        )
-        request = urllib.request.Request(url)
-        request.add_header("X-Aws-Parameters-Secrets-Token", session_token)
-        with urllib.request.urlopen(request, timeout=SECRETS_EXTENSION_TIMEOUT) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return payload["SecretString"]
+        # Secrets Extension 캐시로 조회 — 세션 토큰 검사·HTTP 호출은 공용 모듈이 담당
+        return get_secret_string(AUTHORIZATION_SECRET_ARN, timeout=SECRETS_EXTENSION_TIMEOUT)

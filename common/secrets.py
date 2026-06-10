@@ -15,7 +15,7 @@ class SecretsConfigError(RuntimeError):
     """Secrets 확장 조회에 필요한 설정(세션 토큰 등) 누락 (설정 오류)."""
 
 
-def get_secret_string(secret_id: str) -> str:
+def get_secret_string(secret_id: str, *, timeout: float = 5) -> str:
     # 확장 호출 인증 토큰 — 없으면 레이어 미부착/로컬 실행 → 원인을 명확히
     session_token = os.environ.get("AWS_SESSION_TOKEN")
     if not session_token:
@@ -29,6 +29,6 @@ def get_secret_string(secret_id: str) -> str:
     )
     request = urllib.request.Request(url)
     request.add_header("X-Aws-Parameters-Secrets-Token", session_token)
-    with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         payload = json.loads(response.read())
     return payload["SecretString"]
