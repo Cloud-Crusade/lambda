@@ -26,6 +26,19 @@ class GetSecretStringTest(unittest.TestCase):
         self.assertIn("secretId=dev-captcha-hmac-secret", request.full_url)
         headers = {key.lower(): value for key, value in request.header_items()}
         self.assertEqual(headers["x-aws-parameters-secrets-token"], "session-token")
+        # 기본 timeout(5s)이 urlopen 으로 전달되는지
+        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 5)
+
+    @mock.patch.dict("os.environ", {"AWS_SESSION_TOKEN": "session-token"})
+    @mock.patch("common.secrets.urllib.request.urlopen")
+    def test_passes_custom_timeout(self, mock_urlopen: mock.MagicMock) -> None:
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps({"SecretString": "s"}).encode()
+        mock_urlopen.return_value.__enter__.return_value = response
+
+        secrets_module.get_secret_string("sid", timeout=2)
+
+        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 2)
 
     @mock.patch.dict("os.environ", {}, clear=True)
     def test_missing_session_token_raises(self) -> None:
