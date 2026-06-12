@@ -6,11 +6,18 @@
 from typing import Any
 
 from common.logging import getLogger
-from service import (
-    AuthorizationError,
-    AuthorizerService,
-    MissingCredentialError,
-)
+try:
+    from .service import (  # 패키지 로드(repo·테스트)
+        AuthorizationError,
+        AuthorizerService,
+        MissingCredentialError,
+    )
+except ImportError:
+    from service import (  # 평면 zip(Lambda)
+        AuthorizationError,
+        AuthorizerService,
+        MissingCredentialError,
+    )
 
 logger = getLogger("authorizer")
 
