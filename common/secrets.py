@@ -23,9 +23,10 @@ def get_secret_string(secret_id: str, *, timeout: float = 5) -> str:
             "AWS_SESSION_TOKEN 이 없습니다 (Secrets Extension 레이어 미부착/로컬 실행)"
         )
 
+    # ':'·'/' 는 쿼리에서 유효 → 인코딩하면 확장이 SM 에 잘못된 id(arn%3A…) 전달 → 400(Invalid name)
     url = (
         f"http://localhost:{_EXTENSION_PORT}/secretsmanager/get"
-        f"?secretId={urllib.parse.quote(secret_id, safe='')}"
+        f"?secretId={urllib.parse.quote(secret_id, safe=':/')}"
     )
     request = urllib.request.Request(url)
     request.add_header("X-Aws-Parameters-Secrets-Token", session_token)
