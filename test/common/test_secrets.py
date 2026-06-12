@@ -31,6 +31,22 @@ class GetSecretStringTest(unittest.TestCase):
 
     @mock.patch.dict("os.environ", {"AWS_SESSION_TOKEN": "session-token"})
     @mock.patch("common.secrets.urllib.request.urlopen")
+    def test_arn_secret_id_passed_raw(self, mock_urlopen: mock.MagicMock) -> None:
+        # ARN 의 ':'/'/' 가 인코딩되면 확장이 SM 에 잘못된 id 를 넘겨 400 → raw 전달을 회귀 가드
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps({"SecretString": "pem"}).encode()
+        mock_urlopen.return_value.__enter__.return_value = response
+
+        arn = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:dev-reservation-private-key-AbCdEf"
+        secrets_module.get_secret_string(arn)
+
+        url = mock_urlopen.call_args.args[0].full_url
+        self.assertNotIn("%3A", url)
+        self.assertNotIn("%2F", url)
+        self.assertIn(f"secretId={arn}", url)
+
+    @mock.patch.dict("os.environ", {"AWS_SESSION_TOKEN": "session-token"})
+    @mock.patch("common.secrets.urllib.request.urlopen")
     def test_passes_custom_timeout(self, mock_urlopen: mock.MagicMock) -> None:
         response = mock.MagicMock()
         response.read.return_value = json.dumps({"SecretString": "s"}).encode()
