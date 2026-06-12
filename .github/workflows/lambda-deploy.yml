@@ -48,6 +48,13 @@ jobs:
                   cp -r ../../common ./common
                 fi
 
+                # third-party 의존성을 zip 에 번들 — Lambda(python3.11, x86_64) 호환 wheel 만
+                if [ -f requirements.txt ]; then
+                  pip install -r requirements.txt -t . \
+                    --platform manylinux2014_x86_64 --python-version 3.11 \
+                    --implementation cp --only-binary=:all:
+                fi
+
                 zip -r "../../dist/${name}.zip" .
               )
             fi
