@@ -2,7 +2,10 @@
 import json
 from typing import Any
 
-from domains.ticketing.service import QueueService
+try:
+    from .service import QueueService  # 패키지 로드(repo·테스트)
+except ImportError:
+    from service import QueueService  # 평면 zip(Lambda)
 
 _service = QueueService()
 

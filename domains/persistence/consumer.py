@@ -14,7 +14,11 @@ from typing import Any
 from psycopg2 import OperationalError
 
 from common.logging import getLogger
-from domains.persistence.repository import ReservationRepository
+
+try:
+    from .repository import ReservationRepository  # 패키지 로드(repo·테스트)
+except ImportError:
+    from repository import ReservationRepository  # 평면 zip(Lambda)
 
 logger = getLogger("persistence")
 

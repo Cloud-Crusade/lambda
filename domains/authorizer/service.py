@@ -15,7 +15,11 @@ from typing import Any
 import jwt
 
 from common.logging import getLogger
-from domains.authorizer.keys import KeyProvider
+
+try:
+    from .keys import KeyProvider  # 패키지 로드(repo·테스트)
+except ImportError:
+    from keys import KeyProvider  # 평면 zip(Lambda)
 
 logger = getLogger("authorizer")
 
