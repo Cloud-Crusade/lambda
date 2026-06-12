@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 from common.secrets import get_secret_string
-from domains.captcha.service import CaptchaConfigError, CaptchaService
+from service import CaptchaConfigError, CaptchaService
 
 # 콜드스타트 1회 — 시크릿은 Secrets 확장 캐시에서 조회(env 에는 이름만 둔다)
 _secret_id = os.environ.get("CAPTCHA_SECRET_ID")

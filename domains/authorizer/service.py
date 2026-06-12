@@ -15,7 +15,7 @@ from typing import Any
 import jwt
 
 from common.logging import getLogger
-from domains.authorizer.keys import KeyProvider
+from keys import KeyProvider
 
 logger = getLogger("authorizer")
 

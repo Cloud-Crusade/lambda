@@ -1,7 +1,7 @@
 """persistence 도메인 단일 진입점."""
 from typing import Any
 
-from domains.persistence.consumer import PersistenceConsumer
+from consumer import PersistenceConsumer
 
 _consumer = PersistenceConsumer()
 

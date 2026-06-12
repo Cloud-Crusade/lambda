@@ -2,7 +2,7 @@
 import json
 from typing import Any
 
-from domains.ticketing.service import QueueService
+from service import QueueService
 
 _service = QueueService()
 

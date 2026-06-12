@@ -14,7 +14,7 @@ from typing import Any
 from psycopg2 import OperationalError
 
 from common.logging import getLogger
-from domains.persistence.repository import ReservationRepository
+from repository import ReservationRepository
 
 logger = getLogger("persistence")
 

@@ -6,7 +6,7 @@
 from typing import Any
 
 from common.logging import getLogger
-from domains.authorizer.service import (
+from service import (
     AuthorizationError,
     AuthorizerService,
     MissingCredentialError,
