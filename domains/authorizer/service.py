@@ -109,7 +109,8 @@ class AuthorizerService:
         return self._userId(claims, AUTHORIZATION_USER_CLAIM, AUTHORIZATION_HEADER)
 
     def _userId(self, claims: dict[str, Any], claim: str, source: str) -> str:
-        user_id = claims.get(claim)
-        if not user_id:
+        value = claims.get(claim)
+        # None·빈 문자열만 누락으로 거부(0 같은 falsy 값은 유효한 식별자일 수 있음)
+        if value is None or (isinstance(value, str) and not value.strip()):
             raise InvalidCredentialError(f"{source} token missing {claim} claim")
-        return str(user_id)
+        return str(value).strip()

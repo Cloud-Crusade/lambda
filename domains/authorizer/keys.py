@@ -34,6 +34,9 @@ class KeyProvider:
         if self._public_key is None:
             if not PUBLIC_KEY_URL:
                 raise KeyConfigError("PUBLIC_KEY_URL 환경변수가 비어 있습니다")
+            # 평문(http) fetch 는 키 변조(MITM)로 토큰 검증 우회 위험 → https 만 허용
+            if not PUBLIC_KEY_URL.startswith("https://"):
+                raise KeyConfigError("PUBLIC_KEY_URL 은 https 여야 합니다")
             with urllib.request.urlopen(  # noqa: S310
                 PUBLIC_KEY_URL, timeout=PUBLIC_KEY_FETCH_TIMEOUT,
             ) as response:

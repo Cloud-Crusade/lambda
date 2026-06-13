@@ -29,6 +29,12 @@ class ReservationPublicKeyTest(unittest.TestCase):
             with self.assertRaises(KeyConfigError):
                 KeyProvider().reservationPublicKey()
 
+    def test_non_https_url_raises_config_error(self):
+        # 평문(http) fetch 는 키 변조 위험 → 거부
+        with mock.patch.object(keys_module, "PUBLIC_KEY_URL", "http://cdn/pk.pem"):
+            with self.assertRaises(KeyConfigError):
+                KeyProvider().reservationPublicKey()
+
 
 if __name__ == "__main__":
     unittest.main()
