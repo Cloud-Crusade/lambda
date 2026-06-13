@@ -30,8 +30,9 @@ RESERVATION_ALGORITHM = "RS256"
 AUTHORIZATION_ALGORITHM = "HS256"
 # 예약 토큰 aud — ticketing 이 발급 시 넣는 값과 일치해야 한다(QueueService.JWT_AUDIENCE)
 RESERVATION_AUDIENCE = os.environ.get("RESERVATION_AUDIENCE", "reservation_waiting")
-# 동일 유저 판별에 사용할 클레임 이름 (두 토큰 공통)
-USER_CLAIM = os.environ.get("USER_CLAIM", "user_id")
+# user id 클레임 — 예약 토큰은 user_id, 인증(access) 토큰은 sub 에 담긴다(토큰별로 다름)
+RESERVATION_USER_CLAIM = os.environ.get("RESERVATION_USER_CLAIM", "user_id")
+AUTHORIZATION_USER_CLAIM = os.environ.get("AUTHORIZATION_USER_CLAIM", "sub")
 
 
 class AuthorizationError(Exception):
@@ -92,7 +93,7 @@ class AuthorizerService:
             )
         except jwt.PyJWTError as error:
             raise InvalidCredentialError(f"reservation token invalid: {error}") from error
-        return self._userId(claims, RESERVATION_HEADER)
+        return self._userId(claims, RESERVATION_USER_CLAIM, RESERVATION_HEADER)
 
     def _verifyAuthorization(self, token: str) -> str:
         try:
@@ -105,10 +106,11 @@ class AuthorizerService:
             )
         except jwt.PyJWTError as error:
             raise InvalidCredentialError(f"authorization token invalid: {error}") from error
-        return self._userId(claims, AUTHORIZATION_HEADER)
+        return self._userId(claims, AUTHORIZATION_USER_CLAIM, AUTHORIZATION_HEADER)
 
-    def _userId(self, claims: dict[str, Any], source: str) -> str:
-        user_id = claims.get(USER_CLAIM)
-        if not user_id:
-            raise InvalidCredentialError(f"{source} token missing {USER_CLAIM} claim")
-        return str(user_id)
+    def _userId(self, claims: dict[str, Any], claim: str, source: str) -> str:
+        value = claims.get(claim)
+        # None·빈 문자열만 누락으로 거부(0 같은 falsy 값은 유효한 식별자일 수 있음)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise InvalidCredentialError(f"{source} token missing {claim} claim")
+        return str(value).strip()
