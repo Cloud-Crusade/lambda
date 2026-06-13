@@ -19,14 +19,40 @@ JWT_ALGORITHM = "RS256"
 JWT_AUDIENCE = "reservation_waiting"
 CACHE_TTL_SECONDS = 3600
 
-# 시간 기반 leaky bucket — 입장 수 = 초기 + 경과시간 × 입장률. 폴링 빈도와 무관(시간 산정)해
-# 스파이크에도 일정 속도로 큐 배출. 입장률은 오토스케일되는 reservation pod 수에 비례.
+# 토큰 버킷 입장 제어 — 토큰이 rate 로 차되 capacity 에서 상한(누적 무제한 방지 → lull 후 버스트도 capacity 까지만).
+# rate·capacity 모두 오토스케일되는 reservation pod 수에 비례(다운스트림 수용량 추종).
 QUEUE_PER_POD_ADMIT_PER_SECOND = float(os.environ.get("QUEUE_PER_POD_ADMIT_PER_SECOND", "10"))
+QUEUE_PER_POD_BURST = float(os.environ.get("QUEUE_PER_POD_BURST", "20"))
 # queue_number 가 1부터(incr)라 첫 명을 즉시 들이려면 초기 입장 ≥ 1
 QUEUE_INITIAL_ADMIT = int(os.environ.get("QUEUE_INITIAL_ADMIT", "1"))
 # reservation pod 하트비트 정렬셋(score=epoch). pod 가 ZADD, 큐가 만료분 제거 후 ZCARD 로 라이브 수 산정
 POD_HEARTBEAT_KEY = "rsv:pods"
 POD_HEARTBEAT_TTL_SECONDS = 30
+
+# 입장 커서(current) 원자적 토큰버킷 전진 — 동시 폴링에도 정확. now 는 redis TIME(클럭 일원화).
+# KEYS: current, tokens, tokens_ts, queue(issued)  ARGV: rate, capacity, initial
+_ADMIT_LUA = """
+local t = redis.call('TIME')
+local now = tonumber(t[1])
+local current = tonumber(redis.call('GET', KEYS[1]) or ARGV[3])
+local tokens = tonumber(redis.call('GET', KEYS[2]) or ARGV[2])
+local ts = tonumber(redis.call('GET', KEYS[3]) or now)
+local issued = tonumber(redis.call('GET', KEYS[4]) or '0')
+local rate = tonumber(ARGV[1])
+local cap = tonumber(ARGV[2])
+tokens = tokens + (now - ts) * rate
+if tokens > cap then tokens = cap end
+local waiters = issued - current
+if waiters < 0 then waiters = 0 end
+local admit = math.floor(tokens)
+if admit > waiters then admit = waiters end
+current = current + admit
+tokens = tokens - admit
+redis.call('SET', KEYS[1], current)
+redis.call('SET', KEYS[2], tokens)
+redis.call('SET', KEYS[3], now)
+return current
+"""
 
 
 class SigningKeyError(RuntimeError):
@@ -38,6 +64,7 @@ class QueueService:
         self._redis = redis_client or redis.Redis(
             host=REDIS_HOST, port=REDIS_PORT, decode_responses=True,
         )
+        self._admit = self._redis.register_script(_ADMIT_LUA)
         # 키는 Secrets 확장 캐시에서 조회(env 엔 시크릿 이름만). 콜드스타트에 PEM 검증 → 발급 시 모호한 500 회피
         raw_key = signing_key if signing_key is not None else self._fetchSigningKey()
         self._signing_key = self._loadSigningKey(raw_key)
@@ -77,19 +104,26 @@ class QueueService:
             if not self._redis.set(cache_key, queue_number, nx=True, ex=CACHE_TTL_SECONDS):
                 queue_number = int(self._redis.get(cache_key))
 
-        now = int(time.time())
-        # 이벤트 큐 오픈 시각 고정 — 입장 수 산정의 기준점
-        self._redis.set(f"start:{event_id}", now, nx=True)
-        start = int(self._redis.get(f"start:{event_id}"))
-
-        # 입장 수 = 초기 + 경과시간 × (라이브 pod 수 × pod당 입장률)
-        admit_per_second = self._live_pod_count() * QUEUE_PER_POD_ADMIT_PER_SECOND
-        admitted = QUEUE_INITIAL_ADMIT + int((now - start) * admit_per_second)
+        # 라이브 pod 수에 비례해 토큰버킷 rate·capacity 산정 후, current 를 원자적으로 전진
+        pods = self._live_pod_count()
+        admitted = int(self._admit(
+            keys=[
+                f"current:{event_id}",
+                f"tokens:{event_id}",
+                f"tokens_ts:{event_id}",
+                f"queue:{event_id}",
+            ],
+            args=[
+                pods * QUEUE_PER_POD_ADMIT_PER_SECOND,
+                pods * QUEUE_PER_POD_BURST,
+                QUEUE_INITIAL_ADMIT,
+            ],
+        ))
         remaining = queue_number - admitted
 
         logger.info(
-            "queue_status: user_id=%s, event_id=%s, queue_number=%s, admitted=%s, remaining=%s",
-            user_id, event_id, queue_number, admitted, remaining,
+            "queue_status: user_id=%s, event_id=%s, queue_number=%s, admitted=%s, pods=%s",
+            user_id, event_id, queue_number, admitted, pods,
         )
 
         if remaining <= 0:
