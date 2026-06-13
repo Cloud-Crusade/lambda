@@ -1,11 +1,19 @@
 """ticketing 도메인 단일 진입점."""
 import json
+import os
 from typing import Any
+
+import jwt
+from common.secrets import get_secret_string
 
 try:
     from .service import QueueService  # 패키지 로드(repo·테스트)
 except ImportError:
     from service import QueueService  # 평면 zip(Lambda)
+
+_AUTHORIZATION_SECRET_ID = os.environ.get("AUTHORIZATION_SECRET_ID", "")
+# 인증 경로라 익스텐션 조회 타임아웃 짧게(authorizer 와 동일)
+_SECRETS_TIMEOUT = 2
 
 # 시크릿 조회(Secrets 확장)는 첫 invoke 때 lazy — 확장은 콜드스타트 INIT 시점엔 ready 가 아님(400)
 _service: QueueService | None = None
@@ -18,11 +26,44 @@ def _get_service() -> QueueService:
     return _service
 
 
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    result = _get_service().issue(
-        event_id=event.get("event_id", "test-event"),
-        user_id=event.get("user_id", ""),
+def _user_id_from_token(event: dict[str, Any]) -> str:
+    # 큐 라우트는 API GW authorization=NONE → 람다가 access token(HS256) 직접 검증 후 sub 추출.
+    # 시크릿은 코드 캐시 없이 Secrets 확장 캐시만 신뢰(회전이 재배포 없이 반영) — authorizer 와 동일
+    headers = {key.lower(): value for key, value in (event.get("headers") or {}).items()}
+    token = headers.get("authorization", "").removeprefix("Bearer ").strip()
+    payload = jwt.decode(
+        token,
+        get_secret_string(_AUTHORIZATION_SECRET_ID, timeout=_SECRETS_TIMEOUT),
+        algorithms=["HS256"],
+        options={"verify_aud": False},  # 인증 토큰 aud 규약 미정 — authorizer 와 동일
     )
+    if payload.get("type") != "access":
+        raise jwt.InvalidTokenError("access 토큰이 아닙니다")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise jwt.InvalidTokenError("sub 클레임이 없습니다")
+    return user_id
+
+
+def _error(status: int, code: str, message: str) -> dict[str, Any]:
+    return {
+        "statusCode": status,
+        "body": json.dumps({"code": code, "message": message}, ensure_ascii=False),
+    }
+
+
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    # event_id 누락 시 빈 키(queue:/current:) 공유로 이벤트 간 충돌 → 빠르게 400
+    event_id = (event.get("pathParameters") or {}).get("event_id") or ""
+    if not event_id:
+        return _error(400, "BAD_REQUEST", "event_id 가 필요합니다")
+
+    try:
+        user_id = _user_id_from_token(event)
+    except jwt.InvalidTokenError:
+        return _error(401, "UNAUTHORIZED", "유효하지 않은 토큰입니다")
+
+    result = _get_service().issue(event_id=event_id, user_id=user_id)
     return {
         "statusCode": 200,
         "body": json.dumps(result, ensure_ascii=False),
