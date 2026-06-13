@@ -20,6 +20,8 @@ _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    # 폴링 시 매 GET 마다 프리플라이트 재발생 방지 — 같은 URL 프리플라이트를 10분 캐시
+    "Access-Control-Max-Age": "600",
     "Content-Type": "application/json",
 }
 
