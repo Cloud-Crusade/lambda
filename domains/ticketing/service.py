@@ -1,6 +1,5 @@
 """대기열 순번 발급·조회 및 입장 토큰(JWT) 발급 로직."""
 import os
-import time
 from typing import Any
 
 import jwt
@@ -54,6 +53,25 @@ redis.call('SET', KEYS[3], now)
 return current
 """
 
+# 큐 번호 발급을 원자화 — 캐시 있으면 그대로, 없으면 INCR + SET EX. 동시 최초요청의 중복 INCR 방지.
+# KEYS: cache_key, queue(issued)  ARGV: ttl
+_NUMBER_LUA = """
+local n = redis.call('GET', KEYS[1])
+if n then return tonumber(n) end
+n = redis.call('INCR', KEYS[2])
+redis.call('SET', KEYS[1], n, 'EX', tonumber(ARGV[1]))
+return n
+"""
+
+# 라이브 pod 수 — 만료(>ttl) 하트비트 제거 후 ZCARD. 만료 기준 시각은 redis TIME(클럭 일원화).
+# KEYS: rsv:pods  ARGV: ttl
+_PODS_LUA = """
+local t = redis.call('TIME')
+local now = tonumber(t[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - tonumber(ARGV[1]))
+return redis.call('ZCARD', KEYS[1])
+"""
+
 
 class SigningKeyError(RuntimeError):
     """RS256 서명에 필요한 개인키(PEM)가 없거나 유효하지 않음 (설정 오류)."""
@@ -65,6 +83,8 @@ class QueueService:
             host=REDIS_HOST, port=REDIS_PORT, decode_responses=True,
         )
         self._admit = self._redis.register_script(_ADMIT_LUA)
+        self._assign_number = self._redis.register_script(_NUMBER_LUA)
+        self._count_pods = self._redis.register_script(_PODS_LUA)
         # 키는 Secrets 확장 캐시에서 조회(env 엔 시크릿 이름만). 콜드스타트에 PEM 검증 → 발급 시 모호한 500 회피
         raw_key = signing_key if signing_key is not None else self._fetchSigningKey()
         self._signing_key = self._loadSigningKey(raw_key)
@@ -92,21 +112,15 @@ class QueueService:
         return secret
 
     def issue(self, *, event_id: str, user_id: str) -> dict[str, Any]:
-        cache_key = f"{event_id}:{user_id}"
-        # 신규 user 만 번호 발급(incr). 재폴링은 캐시 번호 재사용 → 폴링마다 queue 카운터가
-        # 부풀어 신규 유저 번호가 실인원보다 커지는(=배출이 못 따라잡는) 문제 방지
-        existing = self._redis.get(cache_key)
-        if existing is not None:
-            queue_number = int(existing)
-        else:
-            queue_number = self._redis.incr(f"queue:{event_id}")
-            # 동시 최초요청 race: 선점 실패 시 기존 값 사용
-            if not self._redis.set(cache_key, queue_number, nx=True, ex=CACHE_TTL_SECONDS):
-                queue_number = int(self._redis.get(cache_key))
+        # 번호 발급을 원자화(재폴링은 캐시 재사용) → 동시 최초요청의 중복 INCR·issued inflation 방지
+        queue_number = int(self._assign_number(
+            keys=[f"{event_id}:{user_id}", f"queue:{event_id}"],
+            args=[CACHE_TTL_SECONDS],
+        ))
 
-        # 라이브 pod 수에 비례해 토큰버킷 rate·capacity 산정 후, current 를 원자적으로 전진
+        # 라이브 pod 수에 비례해 토큰버킷 rate·capacity 산정 후, 입장 커서(current)를 원자적으로 전진
         pods = self._live_pod_count()
-        admitted = int(self._admit(
+        current_number = int(self._admit(
             keys=[
                 f"current:{event_id}",
                 f"tokens:{event_id}",
@@ -119,11 +133,11 @@ class QueueService:
                 QUEUE_INITIAL_ADMIT,
             ],
         ))
-        remaining = queue_number - admitted
+        remaining = queue_number - current_number
 
         logger.info(
-            "queue_status: user_id=%s, event_id=%s, queue_number=%s, admitted=%s, pods=%s",
-            user_id, event_id, queue_number, admitted, pods,
+            "queue_status: user_id=%s, event_id=%s, queue_number=%s, current=%s, pods=%s",
+            user_id, event_id, queue_number, current_number, pods,
         )
 
         if remaining <= 0:
@@ -132,9 +146,7 @@ class QueueService:
 
     def _live_pod_count(self) -> int:
         # 만료(>TTL) 하트비트 제거 후 라이브 reservation pod 수. 하트비트 없으면 1(최소 배출 보장)
-        now = int(time.time())
-        self._redis.zremrangebyscore(POD_HEARTBEAT_KEY, 0, now - POD_HEARTBEAT_TTL_SECONDS)
-        return max(1, self._redis.zcard(POD_HEARTBEAT_KEY))
+        return max(1, int(self._count_pods(keys=[POD_HEARTBEAT_KEY], args=[POD_HEARTBEAT_TTL_SECONDS])))
 
     def _completed(self, *, event_id: str, user_id: str) -> dict[str, Any]:
         token = jwt.encode(
