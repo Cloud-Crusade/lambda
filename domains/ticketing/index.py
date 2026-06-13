@@ -19,7 +19,8 @@ _SECRETS_TIMEOUT = 2
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    # 입장 후 클라가 모든 요청(/queue 포함)에 Reservation 헤더를 실어 보냄 → 프리플라이트 허용 필요
+    "Access-Control-Allow-Headers": "Authorization, Reservation, Content-Type",
     # 폴링 시 매 GET 마다 프리플라이트 재발생 방지 — 같은 URL 프리플라이트를 10분 캐시
     "Access-Control-Max-Age": "600",
     "Content-Type": "application/json",
