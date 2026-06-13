@@ -43,9 +43,23 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _policy(principal_id="unauthorized", effect="Deny", method_arn=method_arn)
 
     logger.info("authorized: user_id=%s", user_id)
+    # Allow 는 캐시(identity=Reservation 헤더, 기본 TTL 300s)되므로 정책 Resource 를 메서드/경로
+    # 와일드카드로 둔다. 특정 methodArn 이면 첫 요청(예 GET) 정책이 캐시돼 다른 메서드(DELETE)가 403.
     return _policy(
-        principal_id=user_id, effect="Allow", method_arn=method_arn, user_id=user_id,
+        principal_id=user_id, effect="Allow", method_arn=_wildcardResource(method_arn), user_id=user_id,
     )
+
+
+def _wildcardResource(method_arn: str) -> str:
+    # arn:aws:execute-api:region:acct:apiId/stage/METHOD/path → .../apiId/stage/* (메서드·경로 무관)
+    parts = method_arn.split(":", 5)
+    if len(parts) < 6:
+        return method_arn
+    segments = parts[5].split("/")
+    if len(segments) < 2:
+        return method_arn
+    parts[5] = f"{segments[0]}/{segments[1]}/*"
+    return ":".join(parts)
 
 
 def _normalizeHeaders(event: dict[str, Any]) -> dict[str, str]:
