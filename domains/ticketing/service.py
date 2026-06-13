@@ -1,5 +1,6 @@
 """대기열 순번 발급·조회 및 입장 토큰(JWT) 발급 로직."""
 import os
+import time
 from typing import Any
 
 import jwt
@@ -17,6 +18,8 @@ RESERVATION_SECRET_ID = os.environ.get("RESERVATION_SECRET_ID", "")
 JWT_ALGORITHM = "RS256"
 JWT_AUDIENCE = "reservation_waiting"
 CACHE_TTL_SECONDS = 3600
+# 입장 토큰 유효시간 — 만료 시 authorizer 가 거부 → 재대기열
+RESERVATION_TOKEN_TTL_SECONDS = int(os.environ.get("RESERVATION_TOKEN_TTL_SECONDS", "600"))
 
 # 토큰 버킷 입장 제어 — 토큰이 rate 로 차되 capacity 에서 상한(누적 무제한 방지 → lull 후 버스트도 capacity 까지만).
 # rate·capacity 모두 오토스케일되는 reservation pod 수에 비례(다운스트림 수용량 추종).
@@ -149,8 +152,15 @@ class QueueService:
         return max(1, int(self._count_pods(keys=[POD_HEARTBEAT_KEY], args=[POD_HEARTBEAT_TTL_SECONDS])))
 
     def _completed(self, *, event_id: str, user_id: str) -> dict[str, Any]:
+        now = int(time.time())
         token = jwt.encode(
-            {"user_id": user_id, "event_id": event_id, "aud": JWT_AUDIENCE},
+            {
+                "user_id": user_id,
+                "event_id": event_id,
+                "aud": JWT_AUDIENCE,
+                "iat": now,
+                "exp": now + RESERVATION_TOKEN_TTL_SECONDS,
+            },
             self._signing_key,
             algorithm=JWT_ALGORITHM,
         )
