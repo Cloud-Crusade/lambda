@@ -17,8 +17,9 @@ if "boto3" not in sys.modules:
     sys.modules["boto3"] = boto3_stub
 
 # jwt 스텁 — token 은 compact JSON. {"_raise": true} 면 검증 실패를 모사한다.
-if "jwt" not in sys.modules:
-    jwt_stub = types.ModuleType("jwt")
+# 다른 테스트(ticketing) 스텁과 공존하도록 심볼만 가산식으로 보강(import 순서 무관)
+jwt_stub = sys.modules.setdefault("jwt", types.ModuleType("jwt"))
+if not hasattr(jwt_stub, "_calls"):
 
     class _PyJWTError(Exception):
         pass
@@ -38,7 +39,6 @@ if "jwt" not in sys.modules:
     jwt_stub.PyJWTError = _PyJWTError
     jwt_stub.decode = _decode
     jwt_stub._calls = _calls  # 테스트에서 핀 검증용으로 참조
-    sys.modules["jwt"] = jwt_stub
 
 import jwt  # noqa: E402
 

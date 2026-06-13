@@ -18,7 +18,7 @@ RESERVATION_SECRET_ID = os.environ.get("RESERVATION_SECRET_ID", "")
 JWT_ALGORITHM = "RS256"
 JWT_AUDIENCE = "reservation_waiting"
 CACHE_TTL_SECONDS = 3600
-# 입장 토큰 유효시간 — 입장 후 이 시간 내 예매를 마치지 않으면 만료(authorizer 가 거부) → 재대기열
+# 입장 토큰 유효시간 — 만료 시 authorizer 가 거부 → 재대기열
 RESERVATION_TOKEN_TTL_SECONDS = int(os.environ.get("RESERVATION_TOKEN_TTL_SECONDS", "600"))
 
 # 토큰 버킷 입장 제어 — 토큰이 rate 로 차되 capacity 에서 상한(누적 무제한 방지 → lull 후 버스트도 capacity 까지만).
