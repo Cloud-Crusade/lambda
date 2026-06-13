@@ -18,7 +18,7 @@ class WildcardResourceTest(unittest.TestCase):
         arn = "arn:aws:execute-api:ap-northeast-2:123456789012:abc123/prod/GET/reservations/1"
         self.assertEqual(
             index_module._wildcardResource(arn),
-            "arn:aws:execute-api:ap-northeast-2:123456789012:abc123/prod/*",
+            "arn:aws:execute-api:ap-northeast-2:123456789012:abc123/prod/*/*",
         )
 
     def test_allow_policy_resource_is_wildcard(self):
@@ -29,7 +29,7 @@ class WildcardResourceTest(unittest.TestCase):
 
         stmt = res["policyDocument"]["Statement"][0]
         self.assertEqual(stmt["Effect"], "Allow")
-        self.assertEqual(stmt["Resource"], "arn:aws:execute-api:r:a:api/stage/*")
+        self.assertEqual(stmt["Resource"], "arn:aws:execute-api:r:a:api/stage/*/*")
         self.assertEqual(res["context"]["user_id"], "u1")
 
 
