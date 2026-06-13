@@ -15,6 +15,14 @@ _AUTHORIZATION_SECRET_ID = os.environ.get("AUTHORIZATION_SECRET_ID", "")
 # 인증 경로라 익스텐션 조회 타임아웃 짧게(authorizer 와 동일)
 _SECRETS_TIMEOUT = 2
 
+# /queue 는 API GW ANY→AWS_PROXY 라 OPTIONS·CORS 를 람다가 직접 처리
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Content-Type": "application/json",
+}
+
 # 시크릿 조회(Secrets 확장)는 첫 invoke 때 lazy — 확장은 콜드스타트 INIT 시점엔 ready 가 아님(400)
 _service: QueueService | None = None
 
@@ -45,26 +53,28 @@ def _user_id_from_token(event: dict[str, Any]) -> str:
     return user_id
 
 
-def _error(status: int, code: str, message: str) -> dict[str, Any]:
+def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
     return {
         "statusCode": status,
-        "body": json.dumps({"code": code, "message": message}, ensure_ascii=False),
+        "headers": _CORS_HEADERS,
+        "body": json.dumps(body, ensure_ascii=False),
     }
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    # CORS 프리플라이트는 인증/바디 없이 즉시 허용 (Authorization 헤더가 실리지 않음)
+    if (event.get("httpMethod") or "").upper() == "OPTIONS":
+        return {"statusCode": 204, "headers": _CORS_HEADERS, "body": ""}
+
     # event_id 누락 시 빈 키(queue:/current:) 공유로 이벤트 간 충돌 → 빠르게 400
     event_id = (event.get("pathParameters") or {}).get("event_id") or ""
     if not event_id:
-        return _error(400, "BAD_REQUEST", "event_id 가 필요합니다")
+        return _response(400, {"code": "BAD_REQUEST", "message": "event_id 가 필요합니다"})
 
     try:
         user_id = _user_id_from_token(event)
     except jwt.InvalidTokenError:
-        return _error(401, "UNAUTHORIZED", "유효하지 않은 토큰입니다")
+        return _response(401, {"code": "UNAUTHORIZED", "message": "유효하지 않은 토큰입니다"})
 
     result = _get_service().issue(event_id=event_id, user_id=user_id)
-    return {
-        "statusCode": 200,
-        "body": json.dumps(result, ensure_ascii=False),
-    }
+    return _response(200, result)
