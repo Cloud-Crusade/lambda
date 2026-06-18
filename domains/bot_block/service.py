@@ -12,11 +12,14 @@ _LOOKBACK_SECONDS = 120
 _QUERY_TIMEOUT_SECONDS = 25
 _QUERY_POLL_INTERVAL = 2
 
-# path 필드 기준 — /payments 는 /{proxy+} 경유라 resourcePath 불일치
+# path 필드 기준 — /payments 는 /{proxy+} 경유라 resourcePath 불일치.
+# 기존: cnt 필터 없이 sort+limit만 사용 → 1회 접근 정상 사용자도 오탐 가능.
+# filter cnt > 30 추가로 최소 요청 횟수 미달 IP 제외.
 _SUSPICIOUS_QUERY = """\
 fields ip, status, path
 | filter status = 429 or path like /\\/reservations/ or path like /\\/payments/
 | stats count() as cnt by ip
+| filter cnt > 30
 | sort cnt desc
 | limit 100"""
 
