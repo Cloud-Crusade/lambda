@@ -36,6 +36,8 @@ class BotBlockService:
         self.redis_client = redis.Redis(
             host=redis_host,
             port=int(os.environ.get("REDIS_PORT", "6379")),
+            ssl=True,
+            ssl_cert_reqs="none",
             decode_responses=True,
             socket_connect_timeout=3,
             socket_timeout=3,

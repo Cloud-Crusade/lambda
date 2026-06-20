@@ -6,7 +6,7 @@ import redis
 _COUNT_WINDOW_SECONDS = 60
 _COUNT_THRESHOLD = 15
 _BLACKLIST_TTL_SECONDS = 3600
-_TARGET_PREFIXES = ("/reservations", "/payments")
+_TARGET_PREFIXES = ("/payments",)
 
 
 class BotCheckService:
@@ -18,6 +18,8 @@ class BotCheckService:
         self.redis_client = redis.Redis(
             host=redis_host,
             port=int(os.environ.get("REDIS_PORT", "6379")),
+            ssl=True,
+            ssl_cert_reqs="none",
             decode_responses=True,
             socket_connect_timeout=3,
             socket_timeout=3,
