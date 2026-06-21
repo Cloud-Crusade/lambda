@@ -25,6 +25,36 @@ class QueueCorsTest(unittest.TestCase):
         self.assertEqual(res["statusCode"], 204)
         self.assertIn("Reservation", res["headers"]["Access-Control-Allow-Headers"])
 
+    def test_options_v2_function_url(self):
+        # Function URL(payload v2.0): 메서드가 requestContext.http.method 에 위치
+        res = index_module.lambda_handler(
+            {"requestContext": {"http": {"method": "OPTIONS"}}}, None
+        )
+        self.assertEqual(res["statusCode"], 204)
+
+
+class EventIdExtractionTest(unittest.TestCase):
+    def test_path_parameters_api_gw(self):
+        # 기존 동작 유지: API GW REST path 변수
+        self.assertEqual(
+            index_module._event_id({"pathParameters": {"event_id": "E1"}}), "E1"
+        )
+
+    def test_query_string_function_url(self):
+        # 추가: Function URL ?event_id=
+        self.assertEqual(
+            index_module._event_id({"queryStringParameters": {"event_id": "E2"}}), "E2"
+        )
+
+    def test_raw_path_function_url(self):
+        # 추가: Function URL /queue/<id> (rawPath 마지막 세그먼트)
+        self.assertEqual(index_module._event_id({"rawPath": "/queue/E3"}), "E3")
+
+    def test_missing_returns_empty(self):
+        # /queue 만(이벤트 없음) → 빈 값 → 핸들러가 400
+        self.assertEqual(index_module._event_id({"rawPath": "/queue"}), "")
+        self.assertEqual(index_module._event_id({}), "")
+
 
 if __name__ == "__main__":
     unittest.main()
