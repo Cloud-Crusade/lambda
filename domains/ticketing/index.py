@@ -64,13 +64,36 @@ def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _http_method(event: dict[str, Any]) -> str:
+    # 메서드 위치: API GW REST(payload v1.0)=httpMethod, Lambda Function URL(v2.0)=requestContext.http.method
+    method = event.get("httpMethod") or (event.get("requestContext") or {}).get("http", {}).get("method")
+    return (method or "").upper()
+
+
+def _event_id(event: dict[str, Any]) -> str:
+    # 기존(API GW REST): path 변수 /queue/{event_id} → pathParameters 우선 유지.
+    # 추가(Function URL): path 변수 바인딩이 없으므로 query(?event_id=) → rawPath(/queue/<id>) 순 폴백.
+    found = (event.get("pathParameters") or {}).get("event_id")
+    if found:
+        return found
+    found = (event.get("queryStringParameters") or {}).get("event_id")
+    if found:
+        return found
+    raw_path = event.get("rawPath") or (event.get("requestContext") or {}).get("http", {}).get("path") or ""
+    segments = [seg for seg in raw_path.split("/") if seg]
+    if len(segments) >= 2 and segments[-2] == "queue":
+        return segments[-1]
+    return ""
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     # CORS 프리플라이트는 인증/바디 없이 즉시 허용 (Authorization 헤더가 실리지 않음)
-    if (event.get("httpMethod") or "").upper() == "OPTIONS":
+    if _http_method(event) == "OPTIONS":
         return {"statusCode": 204, "headers": _CORS_HEADERS, "body": ""}
 
-    # event_id 누락 시 빈 키(queue:/current:) 공유로 이벤트 간 충돌 → 빠르게 400
-    event_id = (event.get("pathParameters") or {}).get("event_id") or ""
+    # event_id 누락 시 빈 키(queue:/current:) 공유로 이벤트 간 충돌 → 빠르게 400.
+    # API GW(path 변수)·Function URL(query·rawPath) 양쪽에서 추출.
+    event_id = _event_id(event)
     if not event_id:
         return _response(400, {"code": "BAD_REQUEST", "message": "event_id 가 필요합니다"})
 
